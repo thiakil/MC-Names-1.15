@@ -1,0 +1,106 @@
+buildscript {
+    repositories {
+        jcenter()
+    }
+    dependencies {
+        classpath "org.apache.commons:commons-csv:1.5"
+        classpath 'de.undercouch:gradle-download-task:4.0.2'
+    }
+}
+plugins {
+    id 'maven-publish'
+}
+apply plugin: 'de.undercouch.download'
+
+import org.apache.commons.csv.CSVFormat
+import org.apache.commons.csv.CSVParser
+import org.apache.commons.csv.CSVRecord
+import org.apache.commons.csv.CSVPrinter
+
+import java.text.SimpleDateFormat
+Calendar calendar = Calendar.getInstance()
+calendar.setTime(new Date())
+SimpleDateFormat sdf = new SimpleDateFormat("yyyyMMdd")
+//sdf.setTimeZone(TimeZone.getTimeZone("UTC"))
+def date = sdf.format(calendar.getTime())
+
+
+group 'com.thiakil.mcp'
+version "$date-github-1.15.1"
+
+task downloadTestCsvs(type: Download) {
+    src([
+            'http://export.mcpbot.bspk.rs/methods.csv',
+            'http://export.mcpbot.bspk.rs/fields.csv',
+            'http://export.mcpbot.bspk.rs/params.csv'
+    ])
+    dest file("$buildDir/mcpbot/")
+    onlyIfModified true
+}
+
+static CSVParser readCsv(File theFile) {
+    return new CSVParser(theFile.newReader(), CSVFormat.DEFAULT
+            .withFirstRecordAsHeader()
+            .withIgnoreHeaderCase()
+            .withTrim())
+}
+
+def joinedOutDir = file("$buildDir/joined/")
+
+task joinCsvs {
+    inputs.files(project.file("methods.csv"), project.file("fields.csv"), project.file("params.csv"))
+    inputs.files(tasks.downloadTestCsvs)
+    outputs.dir(joinedOutDir)
+    doFirst {
+        downloadTestCsvs.outputFiles.each { downloadedFile ->
+            def basename = downloadedFile.name
+            def srgHeader = "searge"
+            if (basename == 'params.csv') {
+                srgHeader = 'param'
+            }
+            Map<String, CSVRecord> namesMap = [:]
+            readCsv(downloadedFile).each { record->
+                namesMap.put(record.get(srgHeader), record)
+            }
+            readCsv(project.file(basename)).each { record ->
+                namesMap.put(record.get(srgHeader), record)
+            }
+            file("$joinedOutDir/$basename").newWriter().withWriter {
+                new CSVPrinter(it, CSVFormat.DEFAULT).withCloseable { printer ->
+                    //header
+                    printer.printRecord(srgHeader,'name','side','desc')
+                    namesMap.each { entry ->
+                        def value = entry.value
+                        printer.print(value.get(srgHeader))
+                        printer.print(value.get('name'))
+                        printer.print(value.get('side'))
+                        if (basename != 'params.csv') {
+                            printer.print(value.isMapped('desc') ? value.get('desc') : '')
+                        }
+                        printer.println()
+                    }
+                }
+            }
+        }
+    }
+}
+
+task makeZip(type: Zip) {
+    dependsOn(tasks.joinCsvs)
+
+    archiveFileName = "mcp_snapshot-${project.version}.zip"
+    destinationDirectory = file("$buildDir/dist")
+
+    from tasks.joinCsvs
+}
+
+
+publishing {
+    publications {
+        maven(MavenPublication) {
+            groupId = 'de.oceanlabs.mcp'
+            artifactId = 'mcp_snapshot'
+            artifact makeZip
+        }
+    }
+}
