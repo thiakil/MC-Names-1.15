@@ -45,6 +45,70 @@ static CSVParser readCsv(File theFile) {
             .withTrim())
 }
 
+task download114Srg(type: Download) {
+    src "https://github.com/MinecraftForge/MCPConfig/raw/master/versions/1.14.3/joined.tsrg"//latest version on mcpbot
+    dest file("$buildDir/")
+    onlyIfModified true
+}
+
+static List<String> readSrg(File srg) {
+    String currentClass = null
+    boolean ignoreClass = false
+    List<String> output = [];
+    srg.readLines().each { line ->
+        if (line[0] != '\t') {
+            def parts = line.split(' ')
+            currentClass = parts[0]
+            ignoreClass = currentClass.indexOf('com/mojang/blaze3d') == 0
+        }
+        else if (!ignoreClass) {
+            def parts = line.substring(1).split(' ')
+            if (parts.length == 2 && parts[1].indexOf('field_') == 0) {//field
+                output.add(parts[1])
+            } else if (parts.length == 3 && parts[2].indexOf('func_') == 0) {//method
+                output.add(parts[2])
+            }
+        }
+    }
+    return output
+}
+
+//todo params
+task check114Names {
+    inputs.files(tasks.download114Srg)
+    inputs.files(project.file("methods.csv"), project.file("fields.csv")/*, project.file("params.csv")*/)
+    doFirst {
+        def methodsCsv = readCsv(project.file("methods.csv")).getRecords()
+        def fieldsCsv = readCsv(project.file("fields.csv")).getRecords()
+        def botCommands = []
+        def srgNames = readSrg(tasks.download114Srg.outputs.files.singleFile)
+
+        methodsCsv.each {entry->
+            //println('"'+match+'" == "'+entry.get('searge')+'" ?')
+            if (srgNames.contains(entry.get('searge'))) {
+                logger.log(LogLevel.ERROR, "Found csv name in 1.14: "+entry.get('searge'))
+                //println("Found csv name in 1.14: "+match)
+                def comment = entry.get("desc")
+                if (comment != "")
+                    comment = " $comment"
+                botCommands.add("sm ${entry.get("searge")} ${entry.get('name')}${comment}")
+            }
+        }
+
+        fieldsCsv.each {entry->
+            if (srgNames.contains(entry.get('searge'))) {
+                logger.log(LogLevel.ERROR, "Found csv name in 1.14: "+entry.get('searge'))
+                def comment = entry.get("desc")
+                if (comment != "")
+                    comment = " $comment"
+                botCommands.add("sf ${entry.get("searge")} ${entry.get('name')}${comment}")
+            }
+        }
+
+        file("$buildDir/botCommands.txt").write(botCommands.join("\n"))
+    }
+}
+
 def joinedOutDir = file("$buildDir/joined/")
 
 task joinCsvs {
